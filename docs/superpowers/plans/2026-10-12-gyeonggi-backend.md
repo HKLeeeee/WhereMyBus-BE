@@ -10,6 +10,8 @@
 
 **Tech Stack:** 1차는 Python JSON 변환과 기존 iOS 앱. 후속 경기 알림은 기존 NestJS/Mongoose/Firebase 기술 사용 가능하나 기존 API 구현체 수정은 범위에서 제외한다.
 
+**최소 변경 검토:** [최종 권고 설계](../../../data/gyeonggi/MINIMAL_CHANGE_DESIGN.md). 초기 경기 즐겨찾기·정기알림·위젯 저장을 미루는 조건에서 기존 CoreData와 서울 ID도 유지한다. 앱 내부 `gg:` 키는 외부 API나 기존 서버로 전송하지 않는다.
+
 **Spec:** [서울 형식 변환 검증](../../../data/gyeonggi/SEOUL_FORMAT_COMPATIBILITY.md), [앱팀 전달 문서](../../../data/gyeonggi/APP_HANDOFF.md). 기존 API/코드 검토 기준은 이 브랜치의 서버 코드다.
 
 ## Global constraints

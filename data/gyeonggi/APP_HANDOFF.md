@@ -1,6 +1,8 @@
 # 경기버스 지원 — iOS 개발팀 전달 문서
 
-작성일: 2026-10-11. 데이터 브랜치: `codex/gyeonggi-app-data`.
+작성일: 2026-10-11. 최종 설계 검토: 2026-10-27. 데이터 브랜치: `codex/gyeonggi-app-data`.
+
+**초기 구현 기준은 [최소 변경 설계](MINIMAL_CHANGE_DESIGN.md)다.** 서울 형식 경기 정류소 파일과 앱 GBIS adapter를 추가한다. 경기 검색·지도·최근 검색·실시간 조회를 먼저 지원하고 경기 즐겨찾기·정기알림·위젯 저장은 후속으로 미루는 권고안이다. 이 범위에서 기존 서버·CoreData·서울 ID 마이그레이션은 필요 없다.
 
 이 브랜치는 공식 경기버스 원본 수집, 앱 데이터 생성, 데이터 검증까지 완료한 인계 자료다. iOS와 서버의 경기 기능 구현은 포함하지 않는다. **정류소·경로 지점 40,971개, 노선 3,156개, 노선별 방문 198,210건**을 제공한다. 이 중 `미정차` 2,193개를 검색에서 제외하면 이름 기준 승차 정류소 후보는 38,778개다. 기존 서울 데이터에 단순 병합하기 전에 제공자와 조회 ID를 분리해야 한다. 서울 필드명·타입으로 통일하는 대안은 [서울 형식 변환 검증](SEOUL_FORMAT_COMPATIBILITY.md) 참조. 기존 백엔드 API는 수정하지 않는다.
 
@@ -29,7 +31,7 @@
 
 ## 2. JSON 계약
 
-세 앱 JSON은 공통 envelope 사용. `data`의 레코드 타입만 다르다.
+아래는 수집·정규화 산출물 3개의 계약이다. 초기 앱 번들은 이 구조를 직접 디코딩하지 않고 [서울 형식](SEOUL_FORMAT_COMPATIBILITY.md)으로 변환한 정류소 파일 하나를 사용한다. 노선/방문 파일은 후속 상세 기능용 보조 자료다. 세 산출물은 공통 envelope를 사용하며 `data`의 레코드 타입만 다르다.
 
 ```json
 {
@@ -89,7 +91,7 @@
 
 모든 ID·노선명·유형코드는 `String`, `turnSeq`만 `Int?`. 노선 번호에 `-`, `M`, `(예약)`이 들어갈 수 있다. 기종점 ID는 이름 조회용이며, 정류소에서 현재 버스가 향하는 방향을 일괄 종점으로 판단하지 않는다.
 
-GBIS `routeTypeCd`는 서울의 버스유형 enum과 별개다. 주요 예: `11` 직행좌석, `13` 일반형, `14` 광역급행, `30` 마을. 기존 서울 `.gyeonggi = "8"`에 그대로 넣으면 타입 의미가 바뀐다. 이번 원본에는 웹 명세의 유형 목록에 없는 **`50` 64개**도 있다. 원문 코드 보존 + `.unknown(rawCode)` 등 일반 표시 경로를 둔다. 전체 유형별 건수는 검증 보고서 `routeTypeCounts`에 있다.
+GBIS `routeTypeCd`는 서울의 버스유형 enum과 별개다. 주요 예: `11` 직행좌석, `13` 일반형, `14` 광역급행, `30` 마을. 기존 서울 `.gyeonggi = "8"`에 그대로 넣으면 타입 의미가 바뀐다. 이번 원본에는 웹 명세의 유형 목록에 없는 **`50` 64개**도 있다. 원문 코드는 경기 DTO에 보존하고 초기 화면은 검증된 코드만 기존 표시 유형으로 매핑한다. 미매핑 코드는 `.common` 일반 표시로 처리한다. 공통 유형 enum 전체 개편은 초기 필수가 아니다. 전체 유형별 건수는 검증 보고서 `routeTypeCounts`에 있다.
 
 ### 노선별 방문: route_stations.json
 
@@ -111,20 +113,15 @@ GBIS `routeTypeCd`는 서울의 버스유형 enum과 별개다. 주요 예: `11`
 
 현재 [BusStopListDTO][ios-station-dto]는 `stop_no`를 `busStopId`로 사용하고 `WMBRegion`은 서울만 지원한다. 경기에서 이 경로를 그대로 쓰면 `01109`로 도착 조회를 보내게 되어 잘못된 요청이 된다.
 
-제안 모델:
+초기 설계는 기존 `busStopId: String` 전달 인터페이스를 유지한다. 서울 값은 기존 arsId 그대로, 경기 값만 `gg:<stationId>`로 생성한다. 공통 helper에서 provider와 API ID를 해석한다. 표시번호는 별도 필드로 보존하고, 외부 API에는 접두사를 제거한 stationId만 전달한다.
 
-```text
-StationReference { provider, apiStationId, displayNumber? }
-서울: provider=seoul,    apiStationId=기존 arsId,    displayNumber=기존 stop_no
-경기: provider=gyeonggi, apiStationId=GBIS stationId, displayNumber=mobileNo
+- 서울 `01001` → 앱 `01001` → 서울 arsId=`01001`.
+- 경기 node_id=`200000078`, stop_no=`01109` → 앱 `gg:200000078` → 경기 stationId=`200000078`, 화면 번호 `01109`.
+- 경기 도착 행은 stationKey + routeId + staOrder로 구분한다. 방향 텍스트로 방문을 식별하지 않는다.
 
-정류소 키: provider + ":" + apiStationId
-경기 노선 방문 키: provider + ":" + stationId + ":" + routeId + ":" + staOrder
-```
+`provider`는 물리적 위치가 아니라 조회 계약을 선택한다. 서울 소재 GBIS 정류소도 경기 키를 쓴다. 제공자 배지로 구분하고 이름·거리·표시번호만으로 두 목록을 합치지 않는다. 서울 기존 즐겨찾기 identifier와 저장값은 재작성하지 않는다.
 
-`provider`는 물리적 위치가 아니라 조회 계약을 선택한다. 종로2가사거리의 서울 `arsId=01001`과 GBIS `stationId=100000001`을 자동으로 같은 ID로 바꾸지 않는다. 두 제공자 목록을 모두 보여줄 때는 제공자 배지/필터로 구분한다. 동일 승강장 UI 통합은 별도 교차 매핑이 검증된 뒤 적용한다. 이름·거리만으로 즐겨찾기 레코드를 합치지 않는다.
-
-지도 SDK가 숫자 클러스터 키를 요구한다면 임시 숫자 → `StationReference` 매핑을 둔다. [LeafMarkerUpdater][ios-marker]는 현재 숫자를 문자열로 바꾸고 5자리 패딩하므로, 제공자 포함 키를 복원할 수 있도록 변경해야 한다.
+지도에서 현재 `Int(busStopId)`와 5자리 패딩을 사용하는 경계는 수정한다. 클러스터 임시 숫자와 원래 문자열 키를 함께 보존하고 선택 이벤트는 원래 키를 전달한다. 표시번호·최근 검색 호환 및 상세 변경 지점은 [최소 변경 설계 3절](MINIMAL_CHANGE_DESIGN.md#3-id--서울-값과-기존-함수-시그니처-보존)을 따른다.
 
 ## 4. 실시간 도착 요청 및 파싱
 
@@ -157,34 +154,31 @@ StationReference { provider, apiStationId, displayNumber? }
 - `predictTimeSec1/2`는 초, `predictTime1/2`는 분. 유효한 초 값을 우선하고, 없으면 분 × 60을 사용하는 정책을 제안한다. 두 필드가 정확히 60배로 일치하지 않는 실제 응답도 있었다.
 - ETA가 유효하면 기존 `.arrivalTime(time:)`에 **초 단위**로 전달한다. `0`초/임박 판단은 명시적으로 처리한다.
 - `RUN`/`PASS`는 운행 중, `STOP`은 운행 종료, `WAIT`는 회차지 대기라는 공식 구분을 따른다. `PASS`를 무정차 통과로 해석하지 않는다. 상태와 ETA가 충돌하면 해당 응답을 진단 가능하게 남기고 표시 정책을 정한다.
-- ETA가 없고 `RUN`/`PASS`인 사례가 실제 존재한다. 현재 [ArrivalState][ios-arrival-domain]의 `soon/pending/finished/arrivalTime`만으로는 “도착정보 없음”을 정확히 표현하기 어렵다. `.unknown` 또는 명시적인 정보없음 상태를 추가하고 모든 switch를 갱신한다.
+- ETA가 없고 `RUN`/`PASS`인 사례가 실제 존재한다. 현재 [ArrivalState][ios-arrival-domain]의 `soon/pending/finished/arrivalTime`만으로는 “도착정보 없음”을 정확히 표현하기 어렵다. `.unknown` 상태를 추가하고 관련 switch와 시간 갱신 함수를 확장한다. 기존 서울 상태 변환은 유지한다.
 - `remainSeatCnt=-1`은 좌석정보 없음. `locationNo`는 남은 정류소 수이며, `staOrder`와 다르다.
 - HTTP/인증 오류, 정상 응답의 조회 결과 없음, 운행 종료, ETA만 없는 상태를 구분한다. 조회 누락 한 번으로 즐겨찾기·정기알림을 삭제하지 않는다.
 
-## 5. iOS 수정 지점
+## 5. iOS 최소 수정 지점
 
-| 영역 | 현재 위치 | 필요한 변경 |
+| 영역 | 현재 위치 | 초기 변경 |
 |---|---|---|
-| 번들 로드 | [DefaultStationListRepository][ios-station-repo] | 서울 번들 유지 + 경기 stations 추가. 단일 실패가 다른 지역 로드를 막지 않게 처리 |
-| DTO/지역 도메인 | [BusStopListDTO][ios-station-dto], [BusStopRegion][ios-region] | 경기 별도 DTO, 제공자 포함 정류소 모델. 서울 ID 매핑은 유지 |
-| 검색·주변 지도 | `DefaultSearchUseCase`, `DefaultNearMapUseCase`, 지역 switch | 경기 컬렉션 반영, 이름에 미정차가 포함된 지점은 선택 대상에서 제외. 최근 검색 직렬화에도 provider/ID 적용 |
-| 지도 선택 | [LeafMarkerUpdater][ios-marker] 및 클러스터 키 생성부 | 5자리 서울 번호 복원 로직 대신 StationReference 조회 |
-| 도착 통신 | [BusStopArrivalInfoEndPoint][ios-endpoint], [DefaultBusStopArrivalInfoRepository][ios-arrival-repo] | 제공자별 endpoint/DTO adapter 선택. `String` 하나만 받는 인터페이스 확장 |
-| 도착 변환 | [BusStopArrivalInfoDTO][ios-arrival-dto], [ArrivalState][ios-arrival-domain] | 경기 중첩 응답·가변 타입·정보없음·유형 코드 대응 |
-| 즐겨찾기 | [FavoritesBusResponse][ios-favorites] 및 도착 결과의 favorite matching | 문자열 단순 연결 키 대신 제공자와 방문 순번이 포함된 키. `toBusStopIds`도 provider 고려 |
-| 영속화 | [CoreData Model_v2][ios-coredata] | FavoritesBus/Stop/RegularAlarm에 provider, 경기 staOrder 등 저장; 모델 버전 증가 |
-| 정기알림 동기화 | [DefaultRegularAlarmRepository][ios-alarm] | 기존 서버 alarm id 유지. 지역 추가로 서버 알림 삭제/재등록하지 않게 마이그레이션 |
-| 위젯/공유 저장 | `Projects/App/Widget` 및 App Group 직렬화 | 새 ID/enum/필드와 이전 저장값 양쪽 처리. 위젯 동작은 별도 실기기 검증 |
+| 번들 로드 | [DefaultStationListRepository][ios-station-repo] | 서울 파일 유지 + 서울 형식 경기 파일 1개. 독립 실패 처리 |
+| 정적 DTO/지역 | [BusStopListDTO][ios-station-dto], [BusStopRegion][ios-region] | 기존 레코드 DTO 재사용, 경기 enum 및 toDomain 분기 |
+| ID/번호 표시 | BusStopInfoResponse, 검색·지도·도착 헤더 | 경기 내부 키 helper, optional displayNumber. 서울 ID/인터페이스 유지 |
+| 검색·주변 | DefaultSearchUseCase, DefaultNearMapUseCase | 경기 컬렉션 반영, 표시번호 검색, 지역별 결과 유지 |
+| 지도 선택 | [LeafMarkerUpdater][ios-marker], NearMapViewController, BusStopClusteringKey | Int 변환/5자리 복원 대신 임시 숫자와 원래 키 연결 |
+| 도착 통신 | [DefaultBusStopArrivalInfoRepository][ios-arrival-repo] | String 인터페이스 유지, 경기 endpoint/실시간 DTO adapter 추가 |
+| 도착 모델 | [ArrivalState][ios-arrival-domain] | unknown 상태, optional staOrder/displayNumber. 복사 함수에 보존 |
+| 최근 검색 | DefaultStationListRepository | 새 저장 키에서 이전 서울 JSON 호환, 기존 키 보존 |
+| 저장·알림 경계 | DefaultBusStopUseCase, 검색/지도 알림 선택 흐름 | 경기 즐겨찾기·알림 저장 차단, 서울 흐름 유지 |
 
-정류소 JSON은 약 6.71 MiB, 전체 방문 JSON은 약 20.57 MiB다. 지도 진입 시 메인 스레드에서 세 파일을 전부 decode/index하지 않는다. 정류소는 백그라운드 로드하고, 노선/방문 데이터는 필요 시 로드하거나 앱 빌드 단계에서 SQLite 등으로 변환한다. iOS 실기기 시작 시간·메모리는 이 작업에서 측정하지 않았다.
+초기 앱에는 변환한 정류소 파일 약 8.7 MB만 추가한다. 전체 노선 방문 JSON 로드나 SQLite 변환은 필요하지 않다. 백그라운드 로드 후 실기기에서 메모리·검색/지도 성능을 측정한다.
 
-### 기존 사용자 마이그레이션
+### 유지 및 후속 범위
 
-1. 기존 CoreData/UserDefaults 레코드에 provider가 없으면 `seoul`로 읽는다. 기존 서울 arsId·즐겨찾기·alarm id를 유지한다.
-2. 경기 신규 레코드는 `stationId`와 별도 `mobileNo`, 노선 방문에는 `routeId`와 `staOrder`를 저장한다. 방향 텍스트를 식별자로 쓰지 않는다.
-3. 기존 즐겨찾기 identifier를 새 규칙으로 옮길 때 충돌·중복을 점검한다. 캐시와 UI favorite matching도 함께 바꾼다.
-4. 최근 검색/위젯 JSON도 이전 버전을 디코딩할 수 있게 한다. 한 레코드의 누락 필드 때문에 전체 목록을 지우지 않는다.
-5. 서버와 로컬 알림의 차집합 동기화는 마이그레이션 뒤에도 기존 알림을 보존하는지 테스트한다. 서울 endpoint를 사용하는 레거시 복원 경로에 경기 ID를 넣지 않는다.
+기존 CoreData 모델, 서울 즐겨찾기 키, 서버 alarm id와 동기화, 위젯/App Group 저장 형식은 유지한다. 초기에는 경기 데이터를 이 저장 경로로 보내지 않는다. 최근 검색은 별도의 작은 호환 작업이 필요하다.
+
+경기 즐겨찾기·정기알림까지 동시에 출시하려면 provider/방문 순번의 영속화와 matching, 앱 저장소 호환, 신규 경기 알림 동기화를 추가 설계해야 한다. 이것은 초기 검색·지도·실시간 조회의 필수 마이그레이션이 아니다. 자세한 차단 경계와 검증은 [최소 변경 설계](MINIMAL_CHANGE_DESIGN.md)를 따른다.
 
 ## 6. BE 협업 — 기존 API 변경 금지
 
@@ -204,14 +198,14 @@ StationReference { provider, apiStationId, displayNumber? }
 - [x] 현재 원본의 중복 기본키/미해결 연결 참조 없음. 좌표 오류·순번 공백·노선 미연결·기종점 참조 누락 0건.
 - [x] 수원/서울/인천 정류소 목록 + 9100번 단건 실호출 성공.
 - [x] Python 테스트 13개, 오프라인 5개 파일 바이트 동일 재생성, 해시 검증, Swift Foundation 전체 파일 디코딩 성공. 앱 통합 빌드는 포함하지 않음.
-- [ ] iOS에 경기 DTO·제공자 분기 통합 후 서울/경기 검색·지도 선택 회귀 테스트.
+- [ ] iOS에 기존 정적 DTO 확장·경기 실시간 DTO·키 분기 통합 후 서울/경기 검색·지도 선택 회귀 테스트.
 - [ ] `01109` 표시, `200000078` 조회가 분리되는지 확인.
 - [ ] 미정차 2,193개는 검색·주변 추천·지도 선택에서 제외하되 원본 경로 순번은 유지. 다음 방면 표시에도 같은 정책 적용.
-- [ ] 같은 노선·정류소의 서로 다른 staOrder를 즐겨찾기와 알림에서 구분.
+- [ ] 같은 노선·정류소의 서로 다른 staOrder를 도착 행에서 구분. 경기 즐겨찾기·알림 저장 경로는 차단.
 - [ ] 숫자/문자열 routeName, ETA 빈 문자열·누락, unknown routeType `50`, 정적 파일 밖 동적 노선 처리.
 - [ ] 기존 서울 사용자 데이터·최근 검색·정기알림 유지, 서버 알림 삭제/재생성 방지.
-- [ ] 경기 알림은 BE 지원 배포 전 등록 불가; 이후 실기기 FCM까지 검증.
-- [ ] 앱 시작/지도 메모리·성능, 위젯 공유 데이터 마이그레이션 실기기 검증.
+- [ ] 경기 알림은 검색·최근 검색·지도 선택 및 use case 경계 모두 등록 불가. 신규 BE 지원 시 실기기 FCM은 후속 검증.
+- [ ] 앱 시작/지도 메모리·성능 및 기존 서울 기능 실기기 검증. 경기 데이터가 기존 위젯 저장 경로로 유입되지 않음 확인.
 
 재생성·검증 명령은 [README](README.md). 이 문서의 미체크 항목은 앱/서버 후속 작업이며 데이터 수집 실패를 의미하지 않는다.
 

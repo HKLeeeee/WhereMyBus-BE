@@ -2,9 +2,11 @@
 
 2026-10-11 GBIS 공식 기반정보 수집 결과. 앱팀 전달 문서는 [APP_HANDOFF.md](APP_HANDOFF.md).
 
+2026-10-27 최종 권고: [최소 변경 설계](MINIMAL_CHANGE_DESIGN.md). 기존 서울 ID와 서버·CoreData를 유지하는 초기 범위와 후속 기능을 구분한다.
+
 2026-10-27 추가 검증: [서울 필드명·타입으로 변환 가능 여부](SEOUL_FORMAT_COMPATIBILITY.md). 기존 백엔드 API는 수정하지 않는다.
 
-백엔드 구현 순서·신규 API 계약·마이그레이션·배포 계획: [경기버스 백엔드 개발 계획](../../docs/superpowers/plans/2026-10-12-gyeonggi-backend.md).
+기존 API 유지 및 향후 경기 알림 분리 계획: [경기버스 백엔드 개발 계획](../../docs/superpowers/plans/2026-10-12-gyeonggi-backend.md).
 
 | 산출물 | 건수 | 용도 |
 |---|---:|---|
